@@ -1,0 +1,9 @@
+{
+  "id": "naia2_easyuse_anima_aio",
+  "name": "EasyUse Anima AiO",
+  "version": "0.1.0",
+  "naia_ext_api": 1,
+  "entry": "main.py",
+  "description": "Generate ComfyUI EasyUse Anima AiO workflows directly from NAIA2.0 COMFYUI params.",
+  "homepage": "https://github.com/n0va39/NAIA2.0-for-ComfyUI"
+}
