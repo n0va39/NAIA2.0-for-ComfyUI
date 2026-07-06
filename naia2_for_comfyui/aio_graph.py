@@ -106,7 +106,7 @@ def normalize_naia_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
     )
 
     normalized = {
-        "prompt": str(_first(source, "prompt", "positive", "positive_prompt", default="") or ""),
+        "prompt": str(_first(source, "input", "prompt", "positive", "positive_prompt", default="") or ""),
         "negative_prompt": str(_first(source, "negative_prompt", "negative", default="") or ""),
         "width": width,
         "height": height,
@@ -121,7 +121,7 @@ def normalize_naia_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
         "filename_prefix": str(_first(source, "filename_prefix", default="NAIA2.0/Anima_AiO") or "NAIA2.0/Anima_AiO"),
     }
     normalized.update({
-        key: str(_first(source, key, default=value) or value)
+        key: str(_first(source, key, "model" if key == "unet_name" else key, default=value) or value)
         for key, value in DEFAULT_MODEL_PARAMS.items()
     })
     return normalized

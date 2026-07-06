@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from aio_graph import (
+from naia2_for_comfyui.aio_graph import (
     AIO_GENERATOR_CLASS,
     AIO_GENERATOR_NODE_ID,
     INPUT_CLASS,
@@ -19,14 +19,15 @@ from aio_graph import (
 class AioGraphTests(unittest.TestCase):
     def test_normalizes_core_naia_params(self):
         params = normalize_naia_params({
-            "prompt": "masterpiece",
+            "input": "masterpiece",
             "negative_prompt": "lowres",
             "width": 1023,
             "height": 777,
             "seed": "42",
             "steps": "28",
-            "cfg": "4.5",
+            "cfg_scale": "4.5",
             "sampler": "euler",
+            "model": "ANIMA\\custom.safetensors",
         })
 
         self.assertEqual(params["prompt"], "masterpiece")
@@ -37,6 +38,7 @@ class AioGraphTests(unittest.TestCase):
         self.assertEqual(params["steps"], 28)
         self.assertEqual(params["cfg"], 4.5)
         self.assertEqual(params["sampler_name"], "euler")
+        self.assertEqual(params["unet_name"], "ANIMA\\custom.safetensors")
 
     def test_builds_minimum_easyuse_anima_aio_prompt_graph(self):
         graph = build_prompt_from_naia_params({
