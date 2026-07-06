@@ -7,10 +7,12 @@ from typing import Any
 PROMPT_STUDIO_NODE_ID = "1"
 INPUT_NODE_ID = "2"
 AIO_GENERATOR_NODE_ID = "3"
+PREVIEW_NODE_ID = "4"
 
 PROMPT_STUDIO_CLASS = "EasyUseAnimaPromptStudioAdvancedV2"
 INPUT_CLASS = "EasyUseAnimaInput"
 AIO_GENERATOR_CLASS = "EasyUseAnimaAIOGenerator"
+PREVIEW_IMAGE_CLASS = "PreviewImage"
 
 PROMPT_DATA_TYPE = "EASYUSE_ANIMA_PROMPT_DATA"
 EASY_USE_ANIMA_INPUT_TYPE = "EASY_USE_ANIMA_INPUT"
@@ -212,7 +214,7 @@ def build_generation_settings(
         "upscale": {"enabled": False},
         "postprocess": {"enabled": False},
         "save": {
-            "enabled": normalized["save_enabled"],
+            "enabled": False,
             "backend": save_backend,
             "image_saver": {
                 "filename": normalized["filename_prefix"],
@@ -229,6 +231,16 @@ def build_generation_settings(
             "compare_previous": False,
             "image_feed": False,
             "feed_count": 12,
+        },
+    }
+
+
+def build_preview_output_node() -> dict[str, Any]:
+    return {
+        "class_type": PREVIEW_IMAGE_CLASS,
+        "_meta": {"title": "naia_output"},
+        "inputs": {
+            "images": [AIO_GENERATOR_NODE_ID, 0],
         },
     }
 
@@ -293,4 +305,5 @@ def build_prompt_from_naia_params(
                 "generation_settings": _json_dumps(generation_settings),
             },
         },
+        PREVIEW_NODE_ID: build_preview_output_node(),
     }

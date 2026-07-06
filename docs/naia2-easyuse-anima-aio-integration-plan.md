@@ -103,8 +103,6 @@ Settings -> Extension 승인 후 퀵 도구에 `EasyUse Anima AiO`가 표시된�
 - `VAE`
 - `CLIP`
 - `CLIP type`
-- `Save image`
-- `Filename prefix`
 
 ### 2. 일반 Generate override
 
@@ -118,6 +116,7 @@ NAIA normal Generate dispatch
   -> cancel original queued request
   -> enqueue derived request with generated AiO API graph in params["workflow"]
   -> NAIA APIService sends that graph directly to ComfyUI /prompt
+  -> NAIA reads the final image from the generated PreviewImage node in ComfyUI history
 ```
 
 핵심은 `params["workflow"]`를 직접 넣는 것이다. NAIA core의 `APIService._call_comfyui_api()`는 `workflow` dict가 있으면 `ComfyUIWorkflowManager.apply_params_to_workflow()`를 우회하고 해당 graph를 그대로 전송한다.
@@ -127,6 +126,7 @@ NAIA normal Generate dispatch
 - NAIA core patch가 필요 없다.
 - 기존 generic/custom workflow 기능을 건드리지 않는다.
 - `Overwrite loaded workflow`가 꺼져 있으면 기존 custom workflow를 보존한다.
+- ComfyUI/AiO 내부 저장 경로를 건드리지 않고, 결과 저장은 NAIA의 기존 저장 설정과 경로를 사용한다.
 
 ### 3. 수동 action
 
@@ -140,6 +140,7 @@ MVP graph는 필수 3노드만 사용한다.
 EasyUseAnimaPromptStudioAdvancedV2
   -> EasyUseAnimaInput
   -> EasyUseAnimaAIOGenerator
+  -> PreviewImage
 ```
 
 노드:
@@ -148,13 +149,15 @@ EasyUseAnimaPromptStudioAdvancedV2
 | --- | --- | --- |
 | `1` | `EasyUseAnimaPromptStudioAdvancedV2` | NAIA prompt/negative/resolution을 prompt data로 변환 |
 | `2` | `EasyUseAnimaInput` | UNET/VAE/CLIP 리소스와 prompt data를 AiO input context로 묶음 |
-| `3` | `EasyUseAnimaAIOGenerator` | txt2img sampling/save 실행 |
+| `3` | `EasyUseAnimaAIOGenerator` | txt2img sampling 실행 |
+| `4` | `PreviewImage` | NAIA 결과 조회용 표준 ComfyUI image output |
 
 필수 링크:
 
 ```text
 1[0] -> 2[0]  EASYUSE_ANIMA_PROMPT_DATA
 2[0] -> 3[0]  EASY_USE_ANIMA_INPUT
+3[0] -> 4[0]  IMAGE
 ```
 
 MVP에서 사용하는 NAIA params:
@@ -173,8 +176,6 @@ MVP에서 사용하는 NAIA params:
 - `vae_name`
 - `clip_name`
 - `clip_type`
-- `save_enabled`
-- `filename_prefix`
 
 MVP 기본 정책:
 
@@ -182,7 +183,10 @@ MVP 기본 정책:
 - Spectrum/DIT corrections disabled
 - KJ SageAttention/Torch Compile disabled
 - Highres/Detailer/Upscale/Postprocess disabled
-- Save backend은 `comfy_save_image`
+- AiO 내부 save disabled
+- NAIA 결과 조회는 `PreviewImage` node id `4`를 preferred output으로 사용
+- 결과 저장 경로는 NAIA의 result/save pipeline 설정을 따른다.
+- 메타데이터는 확장이 생성한 API graph를 `params["workflow"]`로 넘기고, NAIA result/save pipeline이 `workflow_api` 기반 PNG 메타데이터로 보강한다.
 - LoRA preset/lora_stack은 MVP 제외
 
 ## 현재 제한
@@ -232,7 +236,8 @@ MVP 기본 정책:
 완료 조건:
 
 - ComfyUI `/prompt` queue가 성공한다.
-- 결과 PNG metadata에 generated AiO workflow가 남는다.
+- NAIA 결과 패널에 generated AiO image가 표시된다.
+- NAIA가 저장한 결과 PNG metadata에 generated AiO API workflow가 남는다.
 
 ### Issue 3: Advanced UI
 

@@ -8,6 +8,8 @@ from naia2_for_comfyui.aio_graph import (
     AIO_GENERATOR_NODE_ID,
     INPUT_CLASS,
     INPUT_NODE_ID,
+    PREVIEW_IMAGE_CLASS,
+    PREVIEW_NODE_ID,
     PROMPT_DATA_TYPE,
     PROMPT_STUDIO_CLASS,
     PROMPT_STUDIO_NODE_ID,
@@ -52,6 +54,7 @@ class AioGraphTests(unittest.TestCase):
         self.assertEqual(graph[PROMPT_STUDIO_NODE_ID]["class_type"], PROMPT_STUDIO_CLASS)
         self.assertEqual(graph[INPUT_NODE_ID]["class_type"], INPUT_CLASS)
         self.assertEqual(graph[AIO_GENERATOR_NODE_ID]["class_type"], AIO_GENERATOR_CLASS)
+        self.assertEqual(graph[PREVIEW_NODE_ID]["class_type"], PREVIEW_IMAGE_CLASS)
         self.assertEqual(
             graph[INPUT_NODE_ID]["inputs"][PROMPT_DATA_TYPE],
             [PROMPT_STUDIO_NODE_ID, 0],
@@ -60,6 +63,8 @@ class AioGraphTests(unittest.TestCase):
             graph[AIO_GENERATOR_NODE_ID]["inputs"]["easy_use_anima_input"],
             [INPUT_NODE_ID, 0],
         )
+        self.assertEqual(graph[PREVIEW_NODE_ID]["inputs"]["images"], [AIO_GENERATOR_NODE_ID, 0])
+        self.assertEqual(graph[PREVIEW_NODE_ID]["_meta"]["title"], "naia_output")
 
     def test_prompt_studio_uses_naia_values_without_live_naia_fetch(self):
         graph = build_prompt_from_naia_params({
@@ -102,6 +107,19 @@ class AioGraphTests(unittest.TestCase):
         self.assertFalse(settings["upscale"]["enabled"])
         self.assertFalse(settings["postprocess"]["enabled"])
         self.assertEqual(settings["save"]["backend"], "comfy_save_image")
+        self.assertFalse(settings["save"]["enabled"])
+
+    def test_preview_output_is_used_for_naia_result_lookup(self):
+        graph = build_prompt_from_naia_params({
+            "prompt": "test",
+            "save_enabled": True,
+        })
+
+        settings = json.loads(graph[AIO_GENERATOR_NODE_ID]["inputs"]["generation_settings"])
+        self.assertFalse(settings["save"]["enabled"])
+        self.assertEqual(graph[PREVIEW_NODE_ID]["class_type"], PREVIEW_IMAGE_CLASS)
+        self.assertEqual(graph[PREVIEW_NODE_ID]["inputs"]["images"], [AIO_GENERATOR_NODE_ID, 0])
+        self.assertEqual(graph[PREVIEW_NODE_ID]["_meta"]["title"], "naia_output")
 
 
 if __name__ == "__main__":

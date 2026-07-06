@@ -10,8 +10,8 @@ if str(EXTENSION_DIR) not in sys.path:
     sys.path.insert(0, str(EXTENSION_DIR))
 
 from naia2_for_comfyui.aio_graph import (
-    AIO_GENERATOR_NODE_ID,
     DEFAULT_MODEL_PARAMS,
+    PREVIEW_NODE_ID,
     build_prompt_from_naia_params,
 )
 
@@ -24,8 +24,6 @@ DEFAULT_SETTINGS = {
     "vae_name": DEFAULT_MODEL_PARAMS["vae_name"],
     "clip_name": DEFAULT_MODEL_PARAMS["clip_name"],
     "clip_type": DEFAULT_MODEL_PARAMS["clip_type"],
-    "save_enabled": True,
-    "filename_prefix": "NAIA2.0/Anima_AiO",
 }
 
 CLIP_TYPES = ["qwen_image", "stable_diffusion", "sdxl", "sd3", "flux"]
@@ -49,8 +47,6 @@ SCALAR_PARAM_KEYS = (
     "vae_name",
     "clip_name",
     "clip_type",
-    "save_enabled",
-    "filename_prefix",
 )
 
 
@@ -88,8 +84,7 @@ def _load_settings(ctx: Any) -> dict[str, Any]:
         settings.get("allow_workflow_overwrite"),
         False,
     )
-    settings["save_enabled"] = _as_bool(settings.get("save_enabled"), True)
-    for key in ("unet_name", "vae_name", "clip_name", "clip_type", "filename_prefix"):
+    for key in ("unet_name", "vae_name", "clip_name", "clip_type"):
         settings[key] = _clean_text(settings.get(key), str(DEFAULT_SETTINGS[key]))
     return settings
 
@@ -163,22 +158,6 @@ def _panel_fields() -> list[dict[str, Any]]:
             "default": DEFAULT_SETTINGS["clip_type"],
             "section": "Models",
             "order": 130,
-        },
-        {
-            "key": "save_enabled",
-            "type": "bool",
-            "label": "Save image",
-            "default": DEFAULT_SETTINGS["save_enabled"],
-            "section": "Output",
-            "order": 200,
-        },
-        {
-            "key": "filename_prefix",
-            "type": "text",
-            "label": "Filename prefix",
-            "default": DEFAULT_SETTINGS["filename_prefix"],
-            "section": "Output",
-            "order": 210,
         },
     ]
 
@@ -289,15 +268,14 @@ class EasyUseAnimaAioExtension:
         merged["vae_name"] = _clean_text(settings.get("vae_name"), DEFAULT_SETTINGS["vae_name"])
         merged["clip_name"] = _clean_text(settings.get("clip_name"), DEFAULT_SETTINGS["clip_name"])
         merged["clip_type"] = _clean_text(settings.get("clip_type"), DEFAULT_SETTINGS["clip_type"])
-        merged["save_enabled"] = _as_bool(settings.get("save_enabled"), True)
-        merged["filename_prefix"] = _clean_text(settings.get("filename_prefix"), DEFAULT_SETTINGS["filename_prefix"])
+        merged["save_enabled"] = False
         return merged
 
     @staticmethod
     def _build_overrides(params: Mapping[str, Any], workflow: dict[str, Any]) -> dict[str, Any]:
         overrides = {
             "workflow": workflow,
-            "_comfyui_output_node_id": AIO_GENERATOR_NODE_ID,
+            "_comfyui_output_node_id": PREVIEW_NODE_ID,
             "_remote_queue_label": "EasyUse Anima AiO",
             "easyuse_anima_aio_enabled": True,
         }

@@ -87,6 +87,8 @@ class NaiaExtensionContractTests(unittest.TestCase):
         self.assertIn("auto_override", field_keys)
         self.assertIn("allow_workflow_overwrite", field_keys)
         self.assertIn("generate_now", field_keys)
+        self.assertNotIn("save_enabled", field_keys)
+        self.assertNotIn("filename_prefix", field_keys)
 
     def test_generate_action_queues_direct_aio_workflow(self):
         module = load_main_module()
@@ -102,7 +104,8 @@ class NaiaExtensionContractTests(unittest.TestCase):
         self.assertEqual(queued["prompt"], "masterpiece")
         self.assertEqual(queued["negative_prompt"], "lowres")
         self.assertEqual(workflow["3"]["class_type"], "EasyUseAnimaAIOGenerator")
-        self.assertEqual(queued["overrides"]["_comfyui_output_node_id"], "3")
+        self.assertEqual(workflow["4"]["class_type"], "PreviewImage")
+        self.assertEqual(queued["overrides"]["_comfyui_output_node_id"], "4")
 
     def test_normal_generate_hook_cancels_and_requeues_aio_workflow(self):
         module = load_main_module()
