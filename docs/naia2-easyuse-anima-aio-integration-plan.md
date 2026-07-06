@@ -145,11 +145,15 @@ ComfyUI
 
 사용자가 ComfyUI workflow를 불러온 상태에서 `EasyUseAnima AiO`를 선택하면 NAIA2.0은 workflow를 먼저 검사한다.
 
-필수 노드:
+주요 제어 대상:
 
-- `EasyUseAnimaPromptStudioAdvancedV2`
-- `EasyUseAnimaInput`
-- `EasyUseAnimaAIOGenerator`
+| Display name | Class id | 역할 |
+| --- | --- | --- |
+| `Anima Prompt Studio Advanced v2` / `Anima 프롬프트 스튜디오 고급 v2` | `EasyUseAnimaPromptStudioAdvancedV2` | prompt data, positive/negative fields, NAIA fields, width/height, wildcard state |
+| `Easy Use Anima Input` | `EasyUseAnimaInput` | ANIMA diffusion model, VAE, CLIP, CLIP type, prompt data context |
+| `Anima AiO Generator` | `EasyUseAnimaAIOGenerator` | sampler, Spectrum/DIT/model patches, Highres, Detailer, Upscale, Postprocess, Save Options |
+
+이 세 노드는 `EasyUseAnima AiO` 제어의 필수 target set이다. extension과 NAIA2.0은 이 세 노드를 하나의 제어 단위로 인식한다.
 
 선택 노드:
 
@@ -214,6 +218,39 @@ Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator
   - lora preset selection
   - wildcard seed/mode
 
+extension에서 추가로 설정 가능한 고급 params:
+
+- Spectrum sampler
+  - `spectrum_mod_guidance_advanced`
+  - `spectrum_spd_speed`
+  - Spectrum window/flex/warmup/tail/blend/history/compat policy
+  - SPD/SPEED split/scale/sigma/adaptive SMC
+- DIT corrections
+  - DCW, SMC CFG, CFG++, FSG
+  - calibrator, band mask, lambda, sigma/gamma/k values
+- model patches
+  - AuraFlow shift
+  - Anima DAVE
+  - Safe PAG
+  - KJNodes FP16 accumulation, SageAttention, Torch Compile
+- Prompt Studio Advanced v2
+  - field enable/reorder/pin state
+  - NAIA field fill target
+  - wildcard mode/seed/seed-after-generate
+  - resolution bucket/custom/NAIA resolution state
+- Easy Use Anima Input
+  - model resource selection
+  - loader settings stored in hidden `input_settings`
+- Anima AiO Generator
+  - full `generation_settings` editing through schema-aware controls
+  - stage enable/disable and per-stage params
+- Anima LoRA Preset
+  - profile count/index
+  - profile save/load/fix
+  - LoRA row add/remove/reorder
+  - model/clip strength
+  - `lora_stack` connection status
+
 덮어쓰기 금지 시:
 
 - NAIA2.0은 필수 노드와 현재 값을 읽고 상태만 보여준다.
@@ -243,6 +280,8 @@ Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator
 - 여러 `Prompt Studio Advanced v2` / `Easy Use Anima Input` / `Anima AiO Generator` 후보가 있을 때 target set을 선택한다.
 - `ComfyUI overwrite 허용`과 항목별 overwrite checkbox를 제공한다.
 - overwrite diff summary를 queue 전에 보여준다.
+- NAIA2.0 기본 UI에 없는 EasyUseAnima 고급 설정을 schema-aware UI로 제공한다.
+- Spectrum, DIT correction, model patch, Highres, Detailer, Upscale, Postprocess, Save Options를 AiO Generator 설정에 매핑한다.
 - LoRA preset을 조회, 선택, 저장, 복구한다.
 - `Anima LoRA Preset` node와 `lora_stack` 연결 상태를 표시한다.
 - NAIA2.0 remote API 연결 상태와 EasyUseAnima schema/status를 동시에 보여준다.
@@ -264,6 +303,10 @@ NAIA2.0-for-ComfyUI/
     js/
       naia2_comfyui_extension.js
       naia2_aio_panel.js
+      naia2_prompt_studio_panel.js
+      naia2_input_panel.js
+      naia2_aio_generator_panel.js
+      naia2_spectrum_panel.js
       naia2_lora_preset_panel.js
 ```
 
@@ -278,6 +321,7 @@ NAIA2.0-for-ComfyUI/
 - extension은 NAIA2.0이 꺼져 있어도 ComfyUI workflow 검사와 EasyUseAnima schema/status 표시는 가능해야 한다.
 - NAIA2.0 remote API가 연결되어 있을 때만 prompt/random generation과 NAIA params sync를 활성화한다.
 - LoRA preset 파일 쓰기는 EasyUseAnima의 기존 profile API를 우선 사용한다. 별도 파일 포맷을 만들지 않는다.
+- extension UI는 EasyUseAnima schema/defaults에서 필드를 생성한다. NAIA2.0에 없는 고급 설정이라도 schema에 있는 값이면 UI에서 다룰 수 있어야 한다.
 - EasyUseAnima 내부 Python 함수를 직접 import하지 않는다. 공개 route와 `/object_info`를 사용한다.
 
 ## EasyUseAnima 쪽 변경 제안
@@ -462,7 +506,7 @@ MVP에서 노출할 항목:
 - Image Saver Civitai hash rows
 - LoRA stack/preset integration
 
-NAIA2.0 쪽 UI는 생성 params와 remote API 상태에 집중한다. ComfyUI graph target 선택, overwrite diff, LoRA preset 관리처럼 workflow graph와 강하게 연결된 UI는 companion extension에 둔다.
+NAIA2.0 쪽 UI는 생성 params와 remote API 상태에 집중한다. ComfyUI graph target 선택, overwrite diff, LoRA preset 관리, Spectrum/DIT/model patch 같은 고급 node-local 설정은 companion extension에 둔다.
 
 ### 5. 기존 custom workflow 기능 유지
 
@@ -586,20 +630,48 @@ extension에 두지 않는다:
 
 - ComfyUI extension scaffold 추가
 - `NAIA AiO Control` panel 추가
-- `/object_info`와 EasyUseAnima schema/status 기반 필수 노드 자동 인식
+- `/object_info`와 EasyUseAnima schema/status 기반 주요 target set 자동 인식
+  - `Anima Prompt Studio Advanced v2`
+  - `Easy Use Anima Input`
+  - `Anima AiO Generator`
 - target node set 선택 UI
 - overwrite 허용/부분 overwrite UI
 - queue 전 overwrite diff summary
 - NAIA2.0 remote API 연결 상태 표시
+- NAIA2.0 기본 UI에 없는 고급 설정 section placeholder 추가
 
 완료 조건:
 
-- EasyUseAnima 필수 노드가 있는 workflow에서 target set이 자동 감지된다.
+- 세 주요 target node가 있는 workflow에서 target set이 자동 감지된다.
 - 여러 후보가 있을 때 사용자가 target set을 선택할 수 있다.
 - overwrite off 상태에서는 workflow 값이 변경되지 않는다.
 - overwrite on 상태에서 선택한 항목만 overwrite plan에 포함된다.
+- extension UI에서 NAIA2.0 기본 UI에 없는 설정 section이 disabled/placeholder라도 분리되어 보인다.
 
-### Issue 6: Companion extension LoRA preset management
+### Issue 6: Companion extension advanced AiO controls
+
+대상 repo:
+
+- `NAIA2.0-for-ComfyUI`
+- 필요 시 `n0va39/ComfyUI-EasyUseAnima`
+
+작업:
+
+- `Anima AiO Generator`의 full `generation_settings` schema-aware editor 추가
+- Spectrum sampler controls 추가
+- DIT corrections controls 추가
+- model patch controls 추가
+- Detailer target order/basic settings UI 추가
+- Upscale/Postprocess/Save Options UI 추가
+
+완료 조건:
+
+- NAIA2.0 기본 UI에 없는 AiO 고급 설정을 extension에서 열람/수정할 수 있다.
+- schema에 없는 필드는 생성하지 않는다.
+- optional node pack이 없으면 해당 section을 잠그고 이유를 표시한다.
+- overwrite plan에는 사용자가 허용한 고급 설정만 포함된다.
+
+### Issue 7: Companion extension LoRA preset management
 
 대상 repo:
 
@@ -620,7 +692,7 @@ extension에 두지 않는다:
 - profile save/load가 EasyUseAnima 기존 profile API와 호환된다.
 - 없는 LoRA는 기존 EasyUseAnima fix/recovery 흐름을 사용한다.
 
-### Issue 7: Detailer/upscale/save metadata 확장
+### Issue 8: Saved metadata and workflow reproducibility
 
 대상 repo:
 
@@ -630,9 +702,9 @@ extension에 두지 않는다:
 
 작업:
 
-- Detailer target order UI 매핑
-- Upscale/Postprocess/Save Options 전체 매핑
 - saved workflow 재현성 검증
+- generated metadata와 ComfyUI history의 설정 반영 검증
+- saved image workflow reload 검증
 
 완료 조건:
 
@@ -694,6 +766,10 @@ Static:
 ```powershell
 node --check web\js\naia2_comfyui_extension.js
 node --check web\js\naia2_aio_panel.js
+node --check web\js\naia2_prompt_studio_panel.js
+node --check web\js\naia2_input_panel.js
+node --check web\js\naia2_aio_generator_panel.js
+node --check web\js\naia2_spectrum_panel.js
 node --check web\js\naia2_lora_preset_panel.js
 D:\ComfyUI\ComfyUI_main\instances\ComfyUI_codex_test\.venv\Scripts\python.exe -m compileall -q .
 git diff --check
@@ -706,6 +782,7 @@ Runtime smoke:
 - workflow에 필수 AiO 노드가 있을 때 target node set 자동 인식 확인
 - overwrite off 상태에서 plan이 read-only로 남는지 확인
 - overwrite on + 일부 항목 선택 시 선택 항목만 overwrite plan에 포함되는지 확인
+- Spectrum/DIT/model patch 등 NAIA2.0 기본 UI에 없는 고급 section이 schema/status에 맞게 표시되는지 확인
 - LoRA profile list/load/save가 EasyUseAnima API와 호환되는지 확인
 
 ## 주요 위험
@@ -720,6 +797,8 @@ Runtime smoke:
   - 대응: status endpoint와 UI capability lock을 둔다.
 - 현재 AiO Generator는 `txt2img`만 허용한다.
   - 대응: img2img/inpaint는 MVP 범위에서 제외한다.
+- extension이 EasyUseAnima 고급 UI를 독자 구현하다 schema와 drift될 수 있다.
+  - 대응: UI는 EasyUseAnima schema/defaults 기반으로 생성하고, 알 수 없는 필드는 read-only JSON preview로 보존한다.
 
 ## 다음 작업
 
@@ -727,4 +806,5 @@ Runtime smoke:
 2. Issue 1 PR에서 schema/status API와 contract 문서를 추가한다.
 3. `NAIA2.0-for-ComfyUI`에서 companion extension MVP scaffold를 만든다.
 4. 그 다음 NAIA2.0 Issue 2/3에서 contract client와 MVP workflow builder를 만든다.
-5. companion extension에서 LoRA preset 관리 UI를 확장한다.
+5. companion extension에서 Spectrum/DIT/model patch 등 고급 AiO controls를 확장한다.
+6. companion extension에서 LoRA preset 관리 UI를 확장한다.
