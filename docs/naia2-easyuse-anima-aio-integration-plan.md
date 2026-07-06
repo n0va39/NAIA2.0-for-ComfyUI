@@ -136,8 +136,8 @@ NAIA2.0에서 ComfyUI 모드를 선택한 뒤, `COMFYUI 전용 도구` 항목에
   - 기존 workflow import/patch 기능을 그대로 사용.
 - `EasyUseAnima AiO`
   - NAIA2.0 UI에서 prompt, negative, resolution, seed, sampler, highres, detailer, save options를 설정한다.
-  - NAIA2.0은 EasyUseAnima AiO prompt graph를 생성해 ComfyUI `/prompt`에 queue한다.
-  - 사용자가 ComfyUI workflow 덮어쓰기를 허용하면, 현재 workflow 안의 필수 EasyUseAnima 노드를 자동 인식하고 NAIA2.0에서 치환할 params를 선택할 수 있게 한다.
+  - 사용자가 workflow를 직접 지정하지 않아도 NAIA2.0이 EasyUseAnima AiO API graph를 생성해 ComfyUI `/prompt`에 queue한다.
+  - 사용자가 `Use current workflow`와 ComfyUI workflow 덮어쓰기를 허용하면, 현재 workflow 안의 필수 EasyUseAnima 노드를 자동 인식하고 NAIA2.0에서 치환할 params를 선택할 수 있게 한다.
   - ComfyUI에는 EasyUseAnima node pack이 설치되어 있어야 한다.
   - EasyUseAnima가 없거나 버전/스키마가 맞지 않으면 구체적인 오류를 보여준다.
 
@@ -153,8 +153,8 @@ NAIA2.0
   Core
     - ComfyUIService: existing /prompt queue, /history polling
     - EasyUseAnimaAioContractClient: /object_info + /easyuse_anima/aio/schema 조회
-    - EasyUseAnimaAioWorkflowInspector: loaded workflow에서 필수 노드 자동 인식
-    - EasyUseAnimaAioWorkflowBuilder: prompt graph 생성
+    - EasyUseAnimaAioWorkflowBuilder: reference workflow 기반 최소 API graph 생성
+    - EasyUseAnimaAioWorkflowInspector: loaded workflow에서 필수 노드 자동 인식, secondary path
 
 ComfyUI
   NAIA2.0-for-ComfyUI companion extension
@@ -171,11 +171,57 @@ ComfyUI
 
 ## ComfyUI 전용 도구 동작
 
-`EasyUseAnima AiO`는 일반 API 모드가 아니라 NAIA2.0의 ComfyUI 전용 도구 항목으로 추가한다. 이 항목은 기존 ComfyUI mode 위에서 동작하며, 현재 선택된 workflow를 다음 두 경로 중 하나로 처리한다.
+`EasyUseAnima AiO`는 일반 API 모드가 아니라 NAIA2.0의 ComfyUI 전용 도구 항목으로 추가한다. 기본 실행 방식은 사용자가 workflow를 직접 지정하는 것이 아니라, NAIA2.0이 AiO용 최소 API graph를 생성해 ComfyUI `/prompt`에 queue하는 것이다.
 
-### 1. 기존 workflow 기반 제어
+기존 ComfyUI workflow 제어는 secondary path로 둔다. 사용자가 이미 열어둔 workflow를 유지하고 싶을 때만 필수 EasyUseAnima node set을 찾아 부분 overwrite한다.
 
-사용자가 ComfyUI workflow를 불러온 상태에서 `EasyUseAnima AiO`를 선택하면 NAIA2.0은 workflow를 먼저 검사한다.
+### 1. NAIA 생성 AiO API graph
+
+NAIA2.0은 EasyUseAnima의 기존 AiO Generator 샘플 workflow를 reference template로 사용해 최소 API graph를 만든다.
+
+reference workflow:
+
+- `n0va39/ComfyUI-EasyUseAnima`
+- `docs/example_workflows/EasyUse_Anima_AiO_generator_release_ko.json`
+- `extra.easyuse_anima_workflow.workflow_id = "easyuse-anima-aio-generator-0.2.2-ko"`
+- `extra.easyuse_anima_workflow.release_filename = "EasyUse_Anima_AiO_generator_release_ko.json"`
+
+이 workflow에서 확인한 핵심 node/link:
+
+| Node | Class id | 필수 여부 | 역할 |
+| --- | --- | --- | --- |
+| Prompt Studio | `EasyUseAnimaPromptStudioAdvancedV2` | 필수 | prompt data, positive/negative fields, NAIA fields, width/height, wildcard state |
+| Easy Use Anima Input | `EasyUseAnimaInput` | 필수 | ANIMA diffusion model, VAE, CLIP, CLIP type, prompt data context |
+| Anima AiO Generator | `EasyUseAnimaAIOGenerator` | 필수 | sampler, Spectrum/DIT/model patches, Highres, Detailer, Upscale, Postprocess, Save Options |
+| Anima LoRA Preset | `EasyUseAnimaLoraPreset` | 선택 | style prompt, trigger words, `lora_stack` |
+
+필수 link:
+
+```text
+EasyUseAnimaPromptStudioAdvancedV2[0]
+  -> EasyUseAnimaInput[0]                 EASYUSE_ANIMA_PROMPT_DATA
+EasyUseAnimaInput[0]
+  -> EasyUseAnimaAIOGenerator[0]          EASY_USE_ANIMA_INPUT
+```
+
+선택 link:
+
+```text
+EasyUseAnimaLoraPreset[0]
+  -> EasyUseAnimaPromptStudioAdvancedV2[field_positive_artist or selected style field]
+EasyUseAnimaLoraPreset[2]
+  -> EasyUseAnimaPromptStudioAdvancedV2[field_positive_trigger or selected trigger field]
+EasyUseAnimaLoraPreset[1]
+  -> EasyUseAnimaAIOGenerator[1]          LORA_STACK
+```
+
+초기 MVP는 필수 3노드만 생성한다. `Anima LoRA Preset`은 extension의 LoRA preset 관리 UI가 준비된 뒤 선택 경로로 추가한다.
+
+AiO Generator는 `OUTPUT_NODE = True`이고 `image`, `latent`, `metadata_json`을 반환한다. 따라서 API graph MVP에서는 별도 `PreviewImage`나 `SaveImage`를 필수로 붙이지 않는다. 이미지 저장은 AiO Generator의 `generation_settings.save`를 통해 제어한다.
+
+### 2. 기존 workflow 기반 제어
+
+사용자가 ComfyUI workflow를 불러온 상태에서 `EasyUseAnima AiO`를 선택하면 NAIA2.0 또는 companion extension은 workflow를 검사한다.
 
 주요 제어 대상:
 
@@ -201,19 +247,13 @@ ComfyUI
 - 여러 후보가 있으면 사용자가 target node set을 선택하게 한다.
 - 필수 노드가 빠졌거나 연결이 불완전하면 자동 치환을 막고, 누락 노드와 필요한 연결을 표시한다.
 
-### 2. 새 AiO graph 생성
-
-불러온 workflow가 없거나 필수 노드가 없을 때는 NAIA2.0이 최소 AiO API graph를 생성한다.
-
-```text
-Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator
-```
-
-이 경로는 "새 graph 생성"으로 표시하고, 기존 workflow overwrite와 구분한다.
+이 경로는 `Use current workflow`로 표시하고, 기본값인 NAIA 생성 API graph와 구분한다.
 
 ## 덮어쓰기 정책
 
-자동 인식은 읽기 전용으로 먼저 수행한다. 실제 workflow 값 변경은 사용자가 `ComfyUI overwrite 허용`을 켠 경우에만 한다.
+덮어쓰기는 `Use current workflow` secondary path에만 적용한다. 기본 경로인 NAIA 생성 API graph에서는 사용자가 지정한 NAIA params가 새 graph 입력값이므로 기존 workflow overwrite가 발생하지 않는다.
+
+기존 workflow 자동 인식은 읽기 전용으로 먼저 수행한다. 실제 workflow 값 변경은 사용자가 `ComfyUI overwrite 허용`을 켠 경우에만 한다.
 
 덮어쓰기 허용 시 NAIA2.0에서 선택 가능한 params:
 
@@ -489,7 +529,8 @@ NAIA2.0-for-ComfyUI/
 책임:
 
 - NAIA prompt/negative/resolution/settings를 EasyUseAnima prompt graph로 변환한다.
-- 초기 MVP는 `Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator -> Preview/Save` 최소 graph를 만든다.
+- 초기 MVP는 `Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator` 최소 API graph를 만든다.
+- `EasyUse_Anima_AiO_generator_release_ko.json`에서 class ids, required links, `generation_settings` field shape를 추출해 reference template로 삼는다.
 - `generation_settings`는 schema endpoint defaults를 merge해서 만든다.
 - NAIA2.0 기존 generic workflow manager와 책임을 섞지 않는다.
 
@@ -509,6 +550,7 @@ EasyUseAnimaAIOGenerator
 주의:
 
 - ComfyUI prompt graph에는 UI workflow 좌표가 필요 없다. `/prompt`용 API graph만 만들면 된다.
+- AiO Generator는 `OUTPUT_NODE = True`이므로 MVP graph의 terminal node로 둘 수 있다.
 - 저장 이미지에 workflow를 embed해야 하는 경우 UI workflow JSON 또는 `extra_pnginfo` 경로를 별도 검토해야 한다.
 - `lora_stack`은 MVP에서 제외하고, 2차 PR에서 `Anima LoRA Preset` 연계로 확장한다.
 
@@ -600,7 +642,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 - ComfyUI가 extension을 import하고 frontend JS를 로드한다.
 - extension이 비활성 상태에서도 기존 workflow 동작을 바꾸지 않는다.
 
-### Issue 2: Companion extension workflow inspection MVP
+### Issue 2: Generated AiO API graph contract from reference workflow
 
 대상 repo:
 
@@ -608,9 +650,29 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 
 작업:
 
-- ComfyUI extension scaffold 추가
-- `NAIA AiO Control` panel 추가
-- `/object_info`와 EasyUseAnima schema/status 기반 주요 target set 자동 인식
+- `EasyUse_Anima_AiO_generator_release_ko.json`를 reference workflow로 고정
+- reference workflow에서 최소 실행에 필요한 class ids, inputs, links, hidden JSON fields 추출
+- NAIA 생성 API graph contract 문서화
+- generated graph fixture 초안 추가
+- AiO Generator `OUTPUT_NODE = True` 전제와 save/metadata 처리 규칙 정리
+- optional `Anima LoRA Preset` 경로를 MVP 이후 확장으로 분리
+
+완료 조건:
+
+- workflow를 직접 선택하지 않아도 NAIA가 생성해야 할 최소 API graph 구조가 명확하다.
+- 필수 graph가 `Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator`로 정의된다.
+- reference workflow와 generated graph contract의 node/link 차이가 문서화된다.
+
+### Issue 3: Companion extension workflow inspection fallback
+
+대상 repo:
+
+- `NAIA2.0-for-ComfyUI`
+
+작업:
+
+- `NAIA AiO Control` panel에 `Use generated AiO graph` / `Use current workflow` 선택 추가
+- `Use current workflow` 선택 시 `/object_info`와 EasyUseAnima schema/status 기반 주요 target set 자동 인식
   - `Anima Prompt Studio Advanced v2`
   - `Easy Use Anima Input`
   - `Anima AiO Generator`
@@ -622,13 +684,14 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 
 완료 조건:
 
+- 기본값은 generated AiO graph다.
 - 세 주요 target node가 있는 workflow에서 target set이 자동 감지된다.
 - 여러 후보가 있을 때 사용자가 target set을 선택할 수 있다.
 - overwrite off 상태에서는 workflow 값이 변경되지 않는다.
 - overwrite on 상태에서 선택한 항목만 overwrite plan에 포함된다.
 - extension UI에서 NAIA2.0 기본 UI에 없는 설정 section이 disabled/placeholder라도 분리되어 보인다.
 
-### Issue 3: Companion extension advanced AiO controls
+### Issue 4: Companion extension advanced AiO controls
 
 대상 repo:
 
@@ -651,7 +714,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 - optional node pack이 없으면 해당 section을 잠그고 이유를 표시한다.
 - overwrite plan에는 사용자가 허용한 고급 설정만 포함된다.
 
-### Issue 4: Companion extension LoRA preset management
+### Issue 5: Companion extension LoRA preset management
 
 대상 repo:
 
@@ -672,7 +735,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 - profile save/load가 EasyUseAnima 기존 profile API와 호환된다.
 - 없는 LoRA는 기존 EasyUseAnima fix/recovery 흐름을 사용한다.
 
-### Issue 5: EasyUseAnima AiO external control contract
+### Issue 6: EasyUseAnima AiO external control contract
 
 대상 repo:
 
@@ -691,7 +754,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 - 반환 schema/version/node class ids가 실제 node mapping과 일치한다.
 - 기존 AiO UI/워크플로우 동작 변경 없음.
 
-### Issue 6: NAIA2.0 EasyUseAnima AiO contract client
+### Issue 7: NAIA2.0 EasyUseAnima AiO contract client
 
 대상 repo:
 
@@ -708,7 +771,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 - EasyUseAnima 설치 상태를 UI나 로그에서 명확히 구분한다.
 - schema endpoint가 없을 때 generic workflow 모드는 깨지지 않는다.
 
-### Issue 7: NAIA2.0 EasyUseAnima AiO workflow builder MVP
+### Issue 8: NAIA2.0 EasyUseAnima AiO workflow builder MVP
 
 대상 repo:
 
@@ -718,6 +781,7 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 
 - `easyuse_anima_aio` workflow mode 추가
 - MVP API graph builder 추가
+- `NAIA2.0-for-ComfyUI` Issue 2의 generated graph contract 반영
 - prompt/negative/resolution/sampler/highres/save 최소 매핑
 - 기존 generic workflow path 유지
 
@@ -725,9 +789,10 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 
 - NAIA2.0에서 생성한 API graph가 ComfyUI `/prompt` validation을 통과한다.
 - EasyUseAnima AiO Generator가 실제 queue에서 실행된다.
+- 사용자가 별도 workflow를 지정하지 않아도 AiO mode가 실행된다.
 - generic ComfyUI workflow tests가 기존대로 통과한다.
 
-### Issue 8: NAIA2.0 AiO UI controls
+### Issue 9: NAIA2.0 AiO UI controls
 
 대상 repo:
 
@@ -744,9 +809,10 @@ extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-Co
 완료 조건:
 
 - `Generic` 모드 UI와 기존 동작이 유지된다.
-- `EasyUseAnima AiO` 모드에서 MVP graph 설정을 저장/복원할 수 있다.
+- `EasyUseAnima AiO` 모드에서 workflow 선택 없이 MVP graph 설정을 저장/복원할 수 있다.
+- current workflow overwrite는 사용자가 명시적으로 선택했을 때만 활성화된다.
 
-### Issue 9: Saved metadata and workflow reproducibility
+### Issue 10: Saved metadata and workflow reproducibility
 
 대상 repo:
 
@@ -859,8 +925,9 @@ Runtime smoke:
 1. `N0VA39/NAIA2.0-for-ComfyUI` public repository를 만든다.
 2. 이 문서를 기준으로 Issue 1: public repo bootstrap and extension scaffold를 연다.
 3. `NAIA2.0-for-ComfyUI`에서 ComfyUI extension skeleton과 status panel을 먼저 구현한다.
-4. workflow inspection MVP로 세 주요 EasyUseAnima target node set 인식과 overwrite plan을 검증한다.
-5. companion extension에서 Spectrum/DIT/model patch 등 고급 AiO controls를 확장한다.
-6. companion extension에서 LoRA preset 관리 UI를 확장한다.
-7. 안정화된 schema/status 계약을 `n0va39/ComfyUI-EasyUseAnima`에 PR로 분리한다.
-8. 마지막으로 `DNT-LAB/NAIA2.0`에 EasyUseAnima AiO ComfyUI tool mode를 부분 PR로 반영한다.
+4. `EasyUse_Anima_AiO_generator_release_ko.json`를 기준으로 NAIA 생성 최소 API graph contract를 만든다.
+5. `Use generated AiO graph`를 기본 경로로 두고, `Use current workflow` inspection/overwrite는 fallback으로 구현한다.
+6. companion extension에서 Spectrum/DIT/model patch 등 고급 AiO controls를 확장한다.
+7. companion extension에서 LoRA preset 관리 UI를 확장한다.
+8. 안정화된 schema/status 계약을 `n0va39/ComfyUI-EasyUseAnima`에 PR로 분리한다.
+9. 마지막으로 `DNT-LAB/NAIA2.0`에 workflow 지정 없는 EasyUseAnima AiO ComfyUI tool mode를 부분 PR로 반영한다.
