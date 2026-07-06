@@ -8,16 +8,16 @@ NAIA2.0의 ComfyUI 모드에서 `Anima AiO Generator`를 직접 제어할 수 �
 
 ## 결론
 
-권장 방향은 **별도 ComfyUI extension을 먼저 만들기보다, NAIA2.0의 기존 ComfyUI 기능에 `EasyUseAnima AiO` 모드를 추가하고, ComfyUI-EasyUseAnima에는 작은 공개 계약 API를 추가하는 방식**이다.
+권장 방향은 **NAIA2.0의 기존 ComfyUI 기능에 `EasyUseAnima AiO` 모드를 추가하고, 별도 ComfyUI companion extension으로 필요한 UI를 제공하며, ComfyUI-EasyUseAnima에는 작은 공개 계약 API를 추가하는 방식**이다.
 
 이유:
 
 - NAIA2.0은 이미 `COMFYUI` API 모드, `ComfyUIService`, `ComfyUIWorkflowManager`, ComfyUI 파라미터 패널, `/api/comfyui/random` 원격 API를 갖고 있다.
 - EasyUseAnima는 이미 `EasyUseAnimaPromptStudioAdvancedV2`, `EasyUseAnimaInput`, `EasyUseAnimaAIOGenerator`와 `generation_settings` JSON 저장 모델을 갖고 있다.
-- 제3의 ComfyUI extension을 만들면 설치/버전/의존성 축이 하나 늘어난다. 현재 목표는 NAIA2.0에서 EasyUseAnima AiO를 제어하는 것이므로, 제어 UI와 요청 생성은 NAIA2.0에 두는 편이 자연스럽다.
+- 별도 extension은 생성 로직을 복제하지 않고, ComfyUI 안에서 필요한 조작 UI만 제공한다. 예: target node set 선택, overwrite 매핑, LoRA preset 관리, 현재 workflow 상태 표시.
 - 다만 EasyUseAnima 내부의 숨은 JSON 구조를 NAIA2.0이 직접 하드코딩하면 깨지기 쉽다. EasyUseAnima 쪽에 스키마/기본값/노드 계약을 반환하는 읽기 전용 API를 추가해야 한다.
 
-따라서 이 저장소(`NAIA2.0-for-ComfyUI`)는 초기에는 조율/설계/프로토타입 저장소로 쓰고, 실제 코드는 두 upstream 저장소에 나누어 PR로 반영한다.
+따라서 이 저장소(`NAIA2.0-for-ComfyUI`)는 초기 조율/설계 저장소이면서, 이후 ComfyUI companion extension 후보가 된다. 실제 코드는 세 갈래로 나눈다: NAIA2.0의 ComfyUI 전용 도구, EasyUseAnima의 공개 계약 API, `NAIA2.0-for-ComfyUI` companion extension UI.
 
 ## 확인한 현재 구조
 
@@ -97,7 +97,7 @@ NAIA2.0의 ComfyUI 모드에서 `Anima AiO Generator`를 직접 제어할 수 �
 
 ## 목표 UX
 
-NAIA2.0에서 ComfyUI 모드를 선택한 뒤, generation backend를 다음처럼 고를 수 있게 한다.
+NAIA2.0에서 ComfyUI 모드를 선택한 뒤, `COMFYUI 전용 도구` 항목에서 generation backend를 다음처럼 고를 수 있게 한다.
 
 - `Generic ComfyUI Workflow`
   - 현재 기능 유지.
@@ -105,6 +105,7 @@ NAIA2.0에서 ComfyUI 모드를 선택한 뒤, generation backend를 다음처�
 - `EasyUseAnima AiO`
   - NAIA2.0 UI에서 prompt, negative, resolution, seed, sampler, highres, detailer, save options를 설정한다.
   - NAIA2.0은 EasyUseAnima AiO prompt graph를 생성해 ComfyUI `/prompt`에 queue한다.
+  - 사용자가 ComfyUI workflow 덮어쓰기를 허용하면, 현재 workflow 안의 필수 EasyUseAnima 노드를 자동 인식하고 NAIA2.0에서 치환할 params를 선택할 수 있게 한다.
   - ComfyUI에는 EasyUseAnima node pack이 설치되어 있어야 한다.
   - EasyUseAnima가 없거나 버전/스키마가 맞지 않으면 구체적인 오류를 보여준다.
 
@@ -113,20 +114,171 @@ NAIA2.0에서 ComfyUI 모드를 선택한 뒤, generation backend를 다음처�
 ```text
 NAIA2.0
   UI: ComfyUI mode
-    - Generic Workflow panel
-    - EasyUseAnima AiO panel
+    - COMFYUI 전용 도구
+      - Generic Workflow panel
+      - EasyUseAnima AiO control panel
+      - overwrite selection panel
   Core
     - ComfyUIService: existing /prompt queue, /history polling
     - EasyUseAnimaAioContractClient: /object_info + /easyuse_anima/aio/schema 조회
+    - EasyUseAnimaAioWorkflowInspector: loaded workflow에서 필수 노드 자동 인식
     - EasyUseAnimaAioWorkflowBuilder: prompt graph 생성
 
 ComfyUI
+  NAIA2.0-for-ComfyUI companion extension
+    - frontend panel / menu / node selection UI
+    - overwrite mapping UI
+    - LoRA preset management UI
+    - calls NAIA2.0 remote API and EasyUseAnima public routes
   ComfyUI-EasyUseAnima
     - existing nodes
     - new read-only contract routes
       GET /easyuse_anima/aio/schema
       GET /easyuse_anima/aio/status
 ```
+
+## ComfyUI 전용 도구 동작
+
+`EasyUseAnima AiO`는 일반 API 모드가 아니라 NAIA2.0의 ComfyUI 전용 도구 항목으로 추가한다. 이 항목은 기존 ComfyUI mode 위에서 동작하며, 현재 선택된 workflow를 다음 두 경로 중 하나로 처리한다.
+
+### 1. 기존 workflow 기반 제어
+
+사용자가 ComfyUI workflow를 불러온 상태에서 `EasyUseAnima AiO`를 선택하면 NAIA2.0은 workflow를 먼저 검사한다.
+
+필수 노드:
+
+- `EasyUseAnimaPromptStudioAdvancedV2`
+- `EasyUseAnimaInput`
+- `EasyUseAnimaAIOGenerator`
+
+선택 노드:
+
+- `EasyUseAnimaLoraPreset`
+- `EasyUseAnimaWildcard`
+- `EasyUseAnimaPromptDataUnpack`
+
+인식 기준:
+
+- `/object_info`로 EasyUseAnima node class가 설치되어 있는지 확인한다.
+- loaded workflow prompt graph에서 class id를 찾는다.
+- API graph와 UI workflow metadata가 모두 있을 때는 API graph를 우선한다.
+- 여러 후보가 있으면 사용자가 target node set을 선택하게 한다.
+- 필수 노드가 빠졌거나 연결이 불완전하면 자동 치환을 막고, 누락 노드와 필요한 연결을 표시한다.
+
+### 2. 새 AiO graph 생성
+
+불러온 workflow가 없거나 필수 노드가 없을 때는 NAIA2.0이 최소 AiO API graph를 생성한다.
+
+```text
+Prompt Studio Advanced v2 -> Easy Use Anima Input -> Anima AiO Generator
+```
+
+이 경로는 "새 graph 생성"으로 표시하고, 기존 workflow overwrite와 구분한다.
+
+## 덮어쓰기 정책
+
+자동 인식은 읽기 전용으로 먼저 수행한다. 실제 workflow 값 변경은 사용자가 `ComfyUI overwrite 허용`을 켠 경우에만 한다.
+
+덮어쓰기 허용 시 NAIA2.0에서 선택 가능한 params:
+
+- prompt source
+  - positive prompt
+  - negative prompt
+  - prompt data field text
+  - width / height
+- resource selection
+  - `unet_name`
+  - `vae_name`
+  - `clip_name`
+  - `clip_type`
+- sampler
+  - seed
+  - seed after generate
+  - backend
+  - steps
+  - cfg
+  - sampler
+  - scheduler
+  - denoise
+- stage options
+  - highres enable/settings
+  - detailer enable/order/basic target settings
+  - upscale enable/settings
+  - postprocess fit settings
+- save options
+  - save enable
+  - backend
+  - filename prefix
+  - embed workflow
+- optional integrations
+  - lora preset selection
+  - wildcard seed/mode
+
+덮어쓰기 금지 시:
+
+- NAIA2.0은 필수 노드와 현재 값을 읽고 상태만 보여준다.
+- queue에는 원본 workflow 값을 그대로 사용한다.
+- NAIA2.0 params UI는 비활성화하거나 preview-only 상태로 표시한다.
+
+부분 덮어쓰기:
+
+- 사용자가 체크한 params만 치환한다.
+- 체크하지 않은 params는 loaded workflow 값을 보존한다.
+- 치환 전후 diff summary를 queue 직전에 보여준다.
+- hidden serialized widget인 `generation_settings`는 schema defaults와 현재 workflow 값을 merge한 뒤, 선택된 필드만 갱신한다.
+
+금지:
+
+- 필수 노드가 인식되지 않았는데 NAIA2.0 params를 임의 graph 위치에 주입하지 않는다.
+- class id가 같더라도 연결이 불완전하면 silent fallback하지 않는다.
+- schema version mismatch 상태에서 `generation_settings` 내부 필드를 직접 수정하지 않는다.
+
+## Companion Extension UI
+
+`NAIA2.0-for-ComfyUI`는 별도 ComfyUI extension으로 발전시켜, ComfyUI 안에서 필요한 UI를 제공한다. 이 extension은 EasyUseAnima의 node execution을 대체하지 않고, NAIA2.0과 EasyUseAnima 사이의 제어 UI만 맡는다.
+
+주요 역할:
+
+- 현재 workflow에서 EasyUseAnima AiO 필수 노드 자동 탐지 결과를 표시한다.
+- 여러 `Prompt Studio Advanced v2` / `Easy Use Anima Input` / `Anima AiO Generator` 후보가 있을 때 target set을 선택한다.
+- `ComfyUI overwrite 허용`과 항목별 overwrite checkbox를 제공한다.
+- overwrite diff summary를 queue 전에 보여준다.
+- LoRA preset을 조회, 선택, 저장, 복구한다.
+- `Anima LoRA Preset` node와 `lora_stack` 연결 상태를 표시한다.
+- NAIA2.0 remote API 연결 상태와 EasyUseAnima schema/status를 동시에 보여준다.
+
+초기 UI 위치 후보:
+
+- ComfyUI top menu: `NAIA2.0`
+- right sidebar/panel: `NAIA AiO Control`
+- selected AiO node context menu: `Use with NAIA2.0`
+
+초기 extension 구조 후보:
+
+```text
+NAIA2.0-for-ComfyUI/
+  __init__.py
+  pyproject.toml
+  api.py
+  web/
+    js/
+      naia2_comfyui_extension.js
+      naia2_aio_panel.js
+      naia2_lora_preset_panel.js
+```
+
+초기 API 후보:
+
+- `GET /naia2_for_comfyui/status`
+- `POST /naia2_for_comfyui/workflow/inspect`
+- `POST /naia2_for_comfyui/workflow/overwrite_plan`
+
+원칙:
+
+- extension은 NAIA2.0이 꺼져 있어도 ComfyUI workflow 검사와 EasyUseAnima schema/status 표시는 가능해야 한다.
+- NAIA2.0 remote API가 연결되어 있을 때만 prompt/random generation과 NAIA params sync를 활성화한다.
+- LoRA preset 파일 쓰기는 EasyUseAnima의 기존 profile API를 우선 사용한다. 별도 파일 포맷을 만들지 않는다.
+- EasyUseAnima 내부 Python 함수를 직접 import하지 않는다. 공개 route와 `/object_info`를 사용한다.
 
 ## EasyUseAnima 쪽 변경 제안
 
@@ -284,7 +436,7 @@ EasyUseAnimaAIOGenerator
 - 저장 이미지에 workflow를 embed해야 하는 경우 UI workflow JSON 또는 `extra_pnginfo` 경로를 별도 검토해야 한다.
 - `lora_stack`은 MVP에서 제외하고, 2차 PR에서 `Anima LoRA Preset` 연계로 확장한다.
 
-### 4. UI 패널 확장
+### 4. NAIA2.0 UI 패널 확장
 
 MVP에서 노출할 항목:
 
@@ -298,6 +450,7 @@ MVP에서 노출할 항목:
 - sampler backend
 - highres enable + scale/denoise/steps
 - save enable + filename prefix
+- companion extension connection status
 
 2차 이후:
 
@@ -308,6 +461,8 @@ MVP에서 노출할 항목:
 - Postprocess final fit
 - Image Saver Civitai hash rows
 - LoRA stack/preset integration
+
+NAIA2.0 쪽 UI는 생성 params와 remote API 상태에 집중한다. ComfyUI graph target 선택, overwrite diff, LoRA preset 관리처럼 workflow graph와 강하게 연결된 UI는 companion extension에 둔다.
 
 ### 5. 기존 custom workflow 기능 유지
 
@@ -322,24 +477,28 @@ else:
     workflow = comfyui_workflow_manager.apply_params_to_workflow(params)
 ```
 
-## Extension 방식 판단
+## Extension 역할 판단
 
-### 별도 ComfyUI extension으로 시작하지 않는 이유
+별도 extension은 필요하다. 단, 역할은 **생성 로직 구현**이 아니라 **ComfyUI 안의 제어 UI와 workflow inspection 보조**로 제한한다.
 
-- ComfyUI extension은 ComfyUI 내부에 설치되는 세 번째 패키지가 된다.
-- 이미 EasyUseAnima가 ComfyUI node pack 역할을 한다.
-- NAIA2.0의 목적은 외부 자동화/제어 UI이므로, 사용자 입력과 생성 요청의 소유권은 NAIA2.0에 두는 편이 맞다.
-- EasyUseAnima 내부 기능을 또 다른 ComfyUI extension에서 감싸면 버전 호환 문제가 더 복잡해진다.
+extension에 둔다:
 
-### 별도 extension을 검토할 수 있는 경우
+- ComfyUI 화면 안의 `NAIA AiO Control` 패널
+- target AiO node set 선택
+- overwrite 허용/부분 overwrite UI
+- queue 전 overwrite diff
+- LoRA preset 관리 UI
+- EasyUseAnima schema/status 표시
+- NAIA2.0 remote API 연결 상태 표시
 
-다음 조건이 생기면 `NAIA2.0-for-ComfyUI`를 실제 extension으로 전환할 수 있다.
+extension에 두지 않는다:
 
-- NAIA2.0을 실행하지 않고도 ComfyUI 안에서 NAIA prompt generation을 직접 호출해야 한다.
-- EasyUseAnima에 직접 넣기 어려운 NAIA 전용 ComfyUI node가 필요하다.
-- ComfyUI Manager/Registry를 통한 별도 배포가 사용자 설치 흐름을 더 단순하게 만든다.
+- EasyUseAnima AiO sampling/detailer/save 실행 로직 복제
+- EasyUseAnima `generation_settings` schema의 독자 포크
+- NAIA2.0 prompt generation pipeline 복제
+- EasyUseAnima profile 파일 포맷 재정의
 
-현재 단계에서는 이 조건이 아직 아니다.
+이렇게 나누면 설치 축은 하나 늘어나지만, ComfyUI 내부 사용자가 필요한 조작 UI를 얻고, 실제 생성 계약은 EasyUseAnima와 NAIA2.0의 공개 API에 남는다.
 
 ## 이슈/PR 분할안
 
@@ -409,6 +568,7 @@ else:
 - ComfyUI Settings에 workflow mode selector 추가
 - AiO mode일 때 AiO 기본 컨트롤 노출
 - schema/status check 결과 표시
+- companion extension connection status 표시
 - unsupported feature는 비활성화하고 이유 표시
 
 완료 조건:
@@ -416,16 +576,60 @@ else:
 - `Generic` 모드 UI와 기존 동작이 유지된다.
 - `EasyUseAnima AiO` 모드에서 MVP graph 설정을 저장/복원할 수 있다.
 
-### Issue 5: LoRA/detailer/upscale/save metadata 확장
+### Issue 5: NAIA2.0-for-ComfyUI companion extension MVP
 
 대상 repo:
 
-- 우선 `DNT-LAB/NAIA2.0`
+- `NAIA2.0-for-ComfyUI`
+
+작업:
+
+- ComfyUI extension scaffold 추가
+- `NAIA AiO Control` panel 추가
+- `/object_info`와 EasyUseAnima schema/status 기반 필수 노드 자동 인식
+- target node set 선택 UI
+- overwrite 허용/부분 overwrite UI
+- queue 전 overwrite diff summary
+- NAIA2.0 remote API 연결 상태 표시
+
+완료 조건:
+
+- EasyUseAnima 필수 노드가 있는 workflow에서 target set이 자동 감지된다.
+- 여러 후보가 있을 때 사용자가 target set을 선택할 수 있다.
+- overwrite off 상태에서는 workflow 값이 변경되지 않는다.
+- overwrite on 상태에서 선택한 항목만 overwrite plan에 포함된다.
+
+### Issue 6: Companion extension LoRA preset management
+
+대상 repo:
+
+- `NAIA2.0-for-ComfyUI`
 - 필요 시 `n0va39/ComfyUI-EasyUseAnima`
 
 작업:
 
-- `Anima LoRA Preset` 또는 `LORA_STACK` 연결 방식 결정
+- EasyUseAnima LoRA profile API 조회/저장 UI
+- workflow 안의 `Anima LoRA Preset` node 인식
+- preset 선택 시 target node의 serialized profile state 갱신 plan 생성
+- missing LoRA fix/recovery UI 연결
+- `lora_stack` 연결 상태 표시
+
+완료 조건:
+
+- LoRA preset 변경이 사용자가 허용한 target node에만 적용된다.
+- profile save/load가 EasyUseAnima 기존 profile API와 호환된다.
+- 없는 LoRA는 기존 EasyUseAnima fix/recovery 흐름을 사용한다.
+
+### Issue 7: Detailer/upscale/save metadata 확장
+
+대상 repo:
+
+- `DNT-LAB/NAIA2.0`
+- `NAIA2.0-for-ComfyUI`
+- 필요 시 `n0va39/ComfyUI-EasyUseAnima`
+
+작업:
+
 - Detailer target order UI 매핑
 - Upscale/Postprocess/Save Options 전체 매핑
 - saved workflow 재현성 검증
@@ -483,6 +687,27 @@ Runtime smoke:
 - EasyUseAnima AiO mode queue validation
 - 1장 생성 후 `/history/{prompt_id}` output 확인
 
+### NAIA2.0-for-ComfyUI companion extension
+
+Static:
+
+```powershell
+node --check web\js\naia2_comfyui_extension.js
+node --check web\js\naia2_aio_panel.js
+node --check web\js\naia2_lora_preset_panel.js
+D:\ComfyUI\ComfyUI_main\instances\ComfyUI_codex_test\.venv\Scripts\python.exe -m compileall -q .
+git diff --check
+```
+
+Runtime smoke:
+
+- ComfyUI test instance에 extension 설치
+- EasyUseAnima 설치 여부별 status 표시 확인
+- workflow에 필수 AiO 노드가 있을 때 target node set 자동 인식 확인
+- overwrite off 상태에서 plan이 read-only로 남는지 확인
+- overwrite on + 일부 항목 선택 시 선택 항목만 overwrite plan에 포함되는지 확인
+- LoRA profile list/load/save가 EasyUseAnima API와 호환되는지 확인
+
 ## 주요 위험
 
 - EasyUseAnima `generation_settings` schema가 바뀔 수 있다.
@@ -500,4 +725,6 @@ Runtime smoke:
 
 1. 이 문서를 기준으로 EasyUseAnima Issue 1을 먼저 연다.
 2. Issue 1 PR에서 schema/status API와 contract 문서를 추가한다.
-3. 그 다음 NAIA2.0 Issue 2/3에서 contract client와 MVP workflow builder를 만든다.
+3. `NAIA2.0-for-ComfyUI`에서 companion extension MVP scaffold를 만든다.
+4. 그 다음 NAIA2.0 Issue 2/3에서 contract client와 MVP workflow builder를 만든다.
+5. companion extension에서 LoRA preset 관리 UI를 확장한다.
