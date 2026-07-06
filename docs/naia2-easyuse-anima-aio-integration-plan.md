@@ -8,7 +8,7 @@ NAIA2.0의 ComfyUI 모드에서 `Anima AiO Generator`를 직접 제어할 수 �
 
 ## 결론
 
-권장 방향은 **NAIA2.0의 기존 ComfyUI 기능에 `EasyUseAnima AiO` 모드를 추가하고, 별도 ComfyUI companion extension으로 필요한 UI를 제공하며, ComfyUI-EasyUseAnima에는 작은 공개 계약 API를 추가하는 방식**이다.
+권장 방향은 **extension-first**다. 먼저 `NAIA2.0-for-ComfyUI`를 공개 ComfyUI companion extension으로 개발해 workflow 인식, overwrite plan, 고급 AiO UI, LoRA preset 관리 흐름을 검증한다. 이후 안정화된 계약과 공통 로직만 `DNT-LAB/NAIA2.0` 및 `n0va39/ComfyUI-EasyUseAnima`에 부분 PR로 반영한다.
 
 이유:
 
@@ -17,7 +17,39 @@ NAIA2.0의 ComfyUI 모드에서 `Anima AiO Generator`를 직접 제어할 수 �
 - 별도 extension은 생성 로직을 복제하지 않고, ComfyUI 안에서 필요한 조작 UI만 제공한다. 예: target node set 선택, overwrite 매핑, LoRA preset 관리, 현재 workflow 상태 표시.
 - 다만 EasyUseAnima 내부의 숨은 JSON 구조를 NAIA2.0이 직접 하드코딩하면 깨지기 쉽다. EasyUseAnima 쪽에 스키마/기본값/노드 계약을 반환하는 읽기 전용 API를 추가해야 한다.
 
-따라서 이 저장소(`NAIA2.0-for-ComfyUI`)는 초기 조율/설계 저장소이면서, 이후 ComfyUI companion extension 후보가 된다. 실제 코드는 세 갈래로 나눈다: NAIA2.0의 ComfyUI 전용 도구, EasyUseAnima의 공개 계약 API, `NAIA2.0-for-ComfyUI` companion extension UI.
+따라서 이 저장소(`NAIA2.0-for-ComfyUI`)는 초기 조율/설계 저장소가 아니라 1차 구현 저장소로 둔다. 실제 코드는 세 갈래로 나누되, 개발 순서는 `NAIA2.0-for-ComfyUI` companion extension UI -> EasyUseAnima 공개 계약 API -> NAIA2.0 ComfyUI 전용 도구 순서로 진행한다.
+
+## 진행 전략: extension-first
+
+1차 목표는 기존 두 프로젝트를 바로 크게 수정하지 않고, ComfyUI 안에서 동작하는 companion extension을 먼저 완성하는 것이다.
+
+extension-first에 둔다:
+
+- EasyUseAnima AiO 필수 target set 자동 인식
+- `ComfyUI overwrite 허용` 및 항목별 overwrite 선택
+- queue 전 overwrite diff summary
+- NAIA2.0 remote API 연결 상태 표시
+- `/object_info` 및 EasyUseAnima 공개 route 기반 schema/status 조회
+- NAIA2.0 기본 UI에 없는 고급 AiO 설정 UI
+- Spectrum, DIT correction, model patch, Highres, Detailer, Upscale, Postprocess, Save Options UI
+- Anima LoRA Preset node/profile/lora_stack 관리 UI
+
+나중에 upstream PR로 옮긴다:
+
+- EasyUseAnima의 read-only AiO schema/status API
+- EasyUseAnima external control contract 문서와 regression test
+- NAIA2.0의 `EasyUseAnima AiO` ComfyUI tool mode
+- NAIA2.0의 contract client, workflow builder, 기본 AiO params UI
+- extension에서 검증된 workflow inspection 규칙과 overwrite plan 데이터 구조
+
+extension에 남긴다:
+
+- ComfyUI 내부 panel/menu/context UI
+- 고급 node-local 설정 editor
+- LoRA preset 관리 화면
+- target node set 선택과 diff preview 같은 ComfyUI workflow 조작 UX
+
+이 방식은 PR 범위를 작게 유지하면서도 실제 사용자 흐름을 먼저 검증할 수 있다. 단, extension이 EasyUseAnima 내부 Python 함수나 NAIA2.0 내부 구현을 직접 import하지 않는다는 제한은 유지한다.
 
 ## 확인한 현재 구조
 
@@ -546,81 +578,29 @@ extension에 두지 않는다:
 
 ## 이슈/PR 분할안
 
-### Issue 1: EasyUseAnima AiO external control contract
+extension-first 기준으로 이슈를 나눈다. 1차 목표는 `NAIA2.0-for-ComfyUI` 공개 레포에서 ComfyUI extension을 실제로 동작시키는 것이다. EasyUseAnima와 NAIA2.0 PR은 extension에서 계약과 UX가 검증된 뒤 작은 단위로 진행한다.
+
+### Issue 1: Public repo bootstrap and extension scaffold
 
 대상 repo:
 
-- `n0va39/ComfyUI-EasyUseAnima`
+- `NAIA2.0-for-ComfyUI`
 
 작업:
 
-- `/easyuse_anima/aio/schema` 추가
-- `/easyuse_anima/aio/status` 추가
-- contract 문서 추가
-- schema/default regression test 추가
+- public GitHub repository 생성
+- extension package skeleton 추가
+- `WEB_DIRECTORY`와 frontend entrypoint 구성
+- 기본 status API와 frontend status panel 추가
+- ComfyUI test instance에서 load smoke 확인
 
 완료 조건:
 
-- ComfyUI 실행 중 endpoint가 JSON을 반환한다.
-- 반환 schema/version/node class ids가 실제 node mapping과 일치한다.
-- 기존 AiO UI/워크플로우 동작 변경 없음.
+- `N0VA39/NAIA2.0-for-ComfyUI` public repository가 존재한다.
+- ComfyUI가 extension을 import하고 frontend JS를 로드한다.
+- extension이 비활성 상태에서도 기존 workflow 동작을 바꾸지 않는다.
 
-### Issue 2: NAIA2.0 EasyUseAnima AiO contract client
-
-대상 repo:
-
-- `DNT-LAB/NAIA2.0`
-
-작업:
-
-- ComfyUI URL 기준으로 `/object_info`, `/easyuse_anima/aio/schema`, `/easyuse_anima/aio/status` 조회
-- 설치/스키마/버전 오류 메시지 정리
-- headless test 추가
-
-완료 조건:
-
-- EasyUseAnima 설치 상태를 UI나 로그에서 명확히 구분한다.
-- schema endpoint가 없을 때 generic workflow 모드는 깨지지 않는다.
-
-### Issue 3: NAIA2.0 EasyUseAnima AiO workflow builder MVP
-
-대상 repo:
-
-- `DNT-LAB/NAIA2.0`
-
-작업:
-
-- `easyuse_anima_aio` workflow mode 추가
-- MVP API graph builder 추가
-- prompt/negative/resolution/sampler/highres/save 최소 매핑
-- 기존 generic workflow path 유지
-
-완료 조건:
-
-- NAIA2.0에서 생성한 API graph가 ComfyUI `/prompt` validation을 통과한다.
-- EasyUseAnima AiO Generator가 실제 queue에서 실행된다.
-- generic ComfyUI workflow tests가 기존대로 통과한다.
-
-### Issue 4: NAIA2.0 AiO UI controls
-
-대상 repo:
-
-- `DNT-LAB/NAIA2.0`
-
-작업:
-
-- ComfyUI Settings에 workflow mode selector 추가
-- AiO mode일 때 AiO 기본 컨트롤 노출
-- schema/status check 결과 표시
-- companion extension connection status 표시
-- unsupported feature는 비활성화하고 이유 표시
-
-완료 조건:
-
-- `Generic` 모드 UI와 기존 동작이 유지된다.
-- `EasyUseAnima AiO` 모드에서 MVP graph 설정을 저장/복원할 수 있다.
-
-### Issue 5: NAIA2.0-for-ComfyUI companion extension MVP
+### Issue 2: Companion extension workflow inspection MVP
 
 대상 repo:
 
@@ -648,7 +628,7 @@ extension에 두지 않는다:
 - overwrite on 상태에서 선택한 항목만 overwrite plan에 포함된다.
 - extension UI에서 NAIA2.0 기본 UI에 없는 설정 section이 disabled/placeholder라도 분리되어 보인다.
 
-### Issue 6: Companion extension advanced AiO controls
+### Issue 3: Companion extension advanced AiO controls
 
 대상 repo:
 
@@ -671,7 +651,7 @@ extension에 두지 않는다:
 - optional node pack이 없으면 해당 section을 잠그고 이유를 표시한다.
 - overwrite plan에는 사용자가 허용한 고급 설정만 포함된다.
 
-### Issue 7: Companion extension LoRA preset management
+### Issue 4: Companion extension LoRA preset management
 
 대상 repo:
 
@@ -692,7 +672,81 @@ extension에 두지 않는다:
 - profile save/load가 EasyUseAnima 기존 profile API와 호환된다.
 - 없는 LoRA는 기존 EasyUseAnima fix/recovery 흐름을 사용한다.
 
-### Issue 8: Saved metadata and workflow reproducibility
+### Issue 5: EasyUseAnima AiO external control contract
+
+대상 repo:
+
+- `n0va39/ComfyUI-EasyUseAnima`
+
+작업:
+
+- `/easyuse_anima/aio/schema` 추가
+- `/easyuse_anima/aio/status` 추가
+- contract 문서 추가
+- schema/default regression test 추가
+
+완료 조건:
+
+- ComfyUI 실행 중 endpoint가 JSON을 반환한다.
+- 반환 schema/version/node class ids가 실제 node mapping과 일치한다.
+- 기존 AiO UI/워크플로우 동작 변경 없음.
+
+### Issue 6: NAIA2.0 EasyUseAnima AiO contract client
+
+대상 repo:
+
+- `DNT-LAB/NAIA2.0`
+
+작업:
+
+- ComfyUI URL 기준으로 `/object_info`, `/easyuse_anima/aio/schema`, `/easyuse_anima/aio/status` 조회
+- 설치/스키마/버전 오류 메시지 정리
+- headless test 추가
+
+완료 조건:
+
+- EasyUseAnima 설치 상태를 UI나 로그에서 명확히 구분한다.
+- schema endpoint가 없을 때 generic workflow 모드는 깨지지 않는다.
+
+### Issue 7: NAIA2.0 EasyUseAnima AiO workflow builder MVP
+
+대상 repo:
+
+- `DNT-LAB/NAIA2.0`
+
+작업:
+
+- `easyuse_anima_aio` workflow mode 추가
+- MVP API graph builder 추가
+- prompt/negative/resolution/sampler/highres/save 최소 매핑
+- 기존 generic workflow path 유지
+
+완료 조건:
+
+- NAIA2.0에서 생성한 API graph가 ComfyUI `/prompt` validation을 통과한다.
+- EasyUseAnima AiO Generator가 실제 queue에서 실행된다.
+- generic ComfyUI workflow tests가 기존대로 통과한다.
+
+### Issue 8: NAIA2.0 AiO UI controls
+
+대상 repo:
+
+- `DNT-LAB/NAIA2.0`
+
+작업:
+
+- ComfyUI Settings에 workflow mode selector 추가
+- AiO mode일 때 AiO 기본 컨트롤 노출
+- schema/status check 결과 표시
+- companion extension connection status 표시
+- unsupported feature는 비활성화하고 이유 표시
+
+완료 조건:
+
+- `Generic` 모드 UI와 기존 동작이 유지된다.
+- `EasyUseAnima AiO` 모드에서 MVP graph 설정을 저장/복원할 수 있다.
+
+### Issue 9: Saved metadata and workflow reproducibility
 
 대상 repo:
 
@@ -802,9 +856,11 @@ Runtime smoke:
 
 ## 다음 작업
 
-1. 이 문서를 기준으로 EasyUseAnima Issue 1을 먼저 연다.
-2. Issue 1 PR에서 schema/status API와 contract 문서를 추가한다.
-3. `NAIA2.0-for-ComfyUI`에서 companion extension MVP scaffold를 만든다.
-4. 그 다음 NAIA2.0 Issue 2/3에서 contract client와 MVP workflow builder를 만든다.
+1. `N0VA39/NAIA2.0-for-ComfyUI` public repository를 만든다.
+2. 이 문서를 기준으로 Issue 1: public repo bootstrap and extension scaffold를 연다.
+3. `NAIA2.0-for-ComfyUI`에서 ComfyUI extension skeleton과 status panel을 먼저 구현한다.
+4. workflow inspection MVP로 세 주요 EasyUseAnima target node set 인식과 overwrite plan을 검증한다.
 5. companion extension에서 Spectrum/DIT/model patch 등 고급 AiO controls를 확장한다.
 6. companion extension에서 LoRA preset 관리 UI를 확장한다.
+7. 안정화된 schema/status 계약을 `n0va39/ComfyUI-EasyUseAnima`에 PR로 분리한다.
+8. 마지막으로 `DNT-LAB/NAIA2.0`에 EasyUseAnima AiO ComfyUI tool mode를 부분 PR로 반영한다.
